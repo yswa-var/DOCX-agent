@@ -2,6 +2,9 @@
 
 An intelligent document editing system that combines **LangGraph**, **OpenAI**, and **docx2python** to perform CRUD operations on Word documents using natural language.
 
+<img width="864" height="497" alt="Screenshot 2025-09-30 at 7 30 25 PM" src="https://github.com/user-attachments/assets/9817b72a-f468-463f-ab4b-4afd1a814a51" />
+
+
 ## 🎯 Key Features
 
 - ✅ **Natural Language Interface** - Edit documents with plain English
