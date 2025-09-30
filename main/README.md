@@ -1,10 +1,10 @@
-# LangGraph ReAct Agent Template
+# LangGraph DOCX Agent with MCP Support
 
 [![CI](https://github.com/langchain-ai/react-agent/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/langchain-ai/react-agent/actions/workflows/unit-tests.yml)
 [![Integration Tests](https://github.com/langchain-ai/react-agent/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/langchain-ai/react-agent/actions/workflows/integration-tests.yml)
 [![Open in - LangGraph Studio](https://img.shields.io/badge/Open_in-LangGraph_Studio-00324d.svg?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4NS4zMzMiIGhlaWdodD0iODUuMzMzIiB2ZXJzaW9uPSIxLjAiIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHBhdGggZD0iTTEzIDcuOGMtNi4zIDMuMS03LjEgNi4zLTYuOCAyNS43LjQgMjQuNi4zIDI0LjUgMjUuOSAyNC41QzU3LjUgNTggNTggNTcuNSA1OCAzMi4zIDU4IDcuMyA1Ni43IDYgMzIgNmMtMTIuOCAwLTE2LjEuMy0xOSAxLjhtMzcuNiAxNi42YzIuOCAyLjggMy40IDQuMiAzLjQgNy42cy0uNiA0LjgtMy40IDcuNkw0Ny4yIDQzSDE2LjhsLTMuNC0zLjRjLTQuOC00LjgtNC44LTEwLjQgMC0xNS4ybDMuNC0zLjRoMzAuNHoiLz48cGF0aCBkPSJNMTguOSAyNS42Yy0xLjEgMS4zLTEgMS43LjQgMi41LjkuNiAxLjcgMS44IDEuNyAyLjcgMCAxIC43IDIuOCAxLjYgNC4xIDEuNCAxLjkgMS40IDIuNS4zIDMuMi0xIC42LS42LjkgMS40LjkgMS41IDAgMi43LS41IDIuNy0xIDAtLjYgMS4xLS44IDIuNi0uNGwyLjYuNy0xLjgtMi45Yy01LjktOS4zLTkuNC0xMi4zLTExLjUtOS44TTM5IDI2YzAgMS4xLS45IDIuNS0yIDMuMi0yLjQgMS41LTIuNiAzLjQtLjUgNC4yLjguMyAyIDEuNyAyLjUgMy4xLjYgMS41IDEuNCAyLjMgMiAyIDEuNS0uOSAxLjItMy41LS40LTMuNS0yLjEgMC0yLjgtMi44LS44LTMuMyAxLjYtLjQgMS42LS41IDAtLjYtMS4xLS4xLTEuNS0uNi0xLjItMS42LjctMS43IDMuMy0yLjEgMy41LS41LjEuNS4yIDEuNi4zIDIuMiAwIC43LjkgMS40IDEuOSAxLjYgMi4xLjQgMi4zLTIuMy4yLTMuMi0uOC0uMy0yLTEuNy0yLjUtMy4xLTEuMS0zLTMtMy4zLTMtLjUiLz48L3N2Zz4=)](https://langgraph-studio.vercel.app/templates/open?githubUrl=https://github.com/langchain-ai/react-agent)
 
-This template showcases a [ReAct agent](https://arxiv.org/abs/2210.03629) implemented using [LangGraph](https://github.com/langchain-ai/langgraph), designed for [LangGraph Studio](https://github.com/langchain-ai/langgraph-studio). ReAct agents are uncomplicated, prototypical agents that can be flexibly extended to many tools.
+An AI-powered DOCX document agent built with [LangGraph](https://github.com/langchain-ai/langgraph) that can manipulate Microsoft Word documents through natural language commands. Includes **MCP (Model Context Protocol) support** for integration with Claude Desktop, Cursor, and other AI tools.
 
 ![Graph view in LangGraph studio UI](./static/studio_ui.png)
 
@@ -12,15 +12,33 @@ The core logic, defined in `src/react_agent/graph.py`, demonstrates a flexible R
 
 ## What it does
 
-The ReAct agent:
+The DOCX Agent provides intelligent document manipulation through natural language:
 
-1. Takes a user **query** as input
-2. Reasons about the query and decides on an action
-3. Executes the chosen action using available tools
-4. Observes the result of the action
-5. Repeats steps 2-4 until it can provide a final answer
+### Core Capabilities
 
-By default, it's set up with a basic set of tools, but can be easily extended with custom tools to suit various use cases.
+1. **Document Indexing** - Parse and index DOCX files with structured navigation
+2. **Smart Editing** - Apply edits to specific paragraphs with human approval
+3. **TOC Generation** - Automatically create table of contents from headings
+4. **Content Search** - Find text and navigate document structure
+5. **Outline Extraction** - Get hierarchical heading structure
+
+### Available Tools
+
+- `index_docx` - Index/re-index documents with anchor mapping
+- `apply_edit` - Update paragraph content (requires approval)
+- `update_toc` - Generate table of contents from headings
+- `get_paragraph` - Retrieve specific paragraphs by anchor
+- `search_document` - Search for text within documents
+- `get_document_outline` - Get document heading hierarchy
+
+### MCP Server Support
+
+The agent can be exposed as an **MCP (Model Context Protocol) server**, making it accessible to:
+- **Claude Desktop** - Use DOCX tools in Claude conversations
+- **Cursor** - Manipulate documents while coding
+- **Custom AI Apps** - Integrate via MCP SDK
+
+See [MCP_SETUP.md](./MCP_SETUP.md) for detailed setup instructions.
 
 ## Getting Started
 
@@ -33,8 +51,6 @@ cp .env.example .env
 ```
 
 2. Define required API keys in your `.env` file.
-
-The primary [search tool](./src/react_agent/tools.py) [^1] used is [Tavily](https://tavily.com/). Create an API key [here](https://app.tavily.com/sign-in).
 
 ### Setup Model
 
@@ -67,7 +83,39 @@ OPENAI_API_KEY=your-api-key
 ```
 
 3. Customize whatever you'd like in the code.
-4. Open the folder LangGraph Studio!
+4. Open the folder in LangGraph Studio!
+
+## Running as MCP Server
+
+To expose the agent as an MCP server for use with Claude Desktop, Cursor, or other MCP clients:
+
+### Quick Start
+
+```bash
+# Install dependencies
+pip install -e .
+
+# Start the MCP server
+./start_mcp_server.sh
+```
+
+The server will start at `http://localhost:8123` with the MCP endpoint at `/mcp`.
+
+### Detailed Setup
+
+See [MCP_SETUP.md](./MCP_SETUP.md) for:
+- Complete installation instructions
+- MCP client configuration (Claude, Cursor)
+- Tool documentation
+- Testing and troubleshooting
+- Security considerations
+
+### Test the Server
+
+```bash
+# Run the test suite
+python test_mcp_server.py
+```
 
 ## How to customize
 
@@ -89,5 +137,3 @@ Follow up requests will be appended to the same thread. You can create an entire
 You can find the latest (under construction) docs on [LangGraph](https://github.com/langchain-ai/langgraph) here, including examples and other references. Using those guides can help you pick the right patterns to adapt here for your use case.
 
 LangGraph Studio also integrates with [LangSmith](https://smith.langchain.com/) for more in-depth tracing and collaboration with teammates.
-
-[^1]: https://python.langchain.com/docs/concepts/#tools

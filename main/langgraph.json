@@ -2,7 +2,10 @@
   "$schema": "https://langgra.ph/schema.json",
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/react_agent/graph.py:graph"
+    "docx_agent": {
+      "path": "./src/react_agent/graph.py:graph",
+      "description": "AI-powered DOCX document agent that can index documents, apply edits to specific paragraphs, update table of contents, search content, and navigate document structure using natural language commands. Supports anchor-based navigation and human approval for write operations."
+    }
   },
   "env": ".env"
 }

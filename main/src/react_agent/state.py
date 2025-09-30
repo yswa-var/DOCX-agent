@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
@@ -51,6 +51,19 @@ class State(InputState):
 
     This is a 'managed' variable, controlled by the state machine rather than user code.
     It is set to 'True' when the step count reaches recursion_limit - 1.
+    """
+
+    pending_operation: Optional[Dict[str, Any]] = field(default=None)
+    """
+    Stores information about a pending operation that requires human approval.
+    
+    Structure:
+    {
+        "tool_name": str,          # Name of the tool being called
+        "tool_call_id": str,       # ID of the tool call
+        "args": dict,              # Arguments for the tool
+        "description": str         # Human-readable description
+    }
     """
 
     # Additional attributes can be added here as needed.

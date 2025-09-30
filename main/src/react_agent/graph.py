@@ -4,12 +4,13 @@ Works with a chat model with tool calling support.
 """
 
 from datetime import UTC, datetime
-from typing import Dict, List, Literal, cast
+from typing import Any, Dict, List, Literal, cast
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
+from langgraph.types import Command, interrupt
 
 from react_agent.context import Context
 from react_agent.state import InputState, State
@@ -73,29 +74,123 @@ async def call_model(
         return {"messages": [error_message]}
 
 
-# Define a new graph
-
-builder = StateGraph(State, input_schema=InputState, context_schema=Context)
-
-# Define the two nodes we will cycle between
-builder.add_node(call_model)
-builder.add_node("tools", ToolNode(TOOLS))
-
-# Set the entrypoint as `call_model`
-# This means that this node is the first one called
-builder.add_edge("__start__", "call_model")
+# List of tools that require human approval (write operations)
+WRITE_TOOLS = {"apply_edit"}  # Add more write tools here as needed
 
 
-def route_model_output(state: State) -> Literal["__end__", "tools"]:
+def requires_approval(tool_name: str) -> bool:
+    """Check if a tool requires human approval.
+    
+    Args:
+        tool_name: Name of the tool being called
+        
+    Returns:
+        True if the tool requires approval, False otherwise
+    """
+    return tool_name in WRITE_TOOLS
+
+
+async def approval_node(state: State) -> Dict[str, Any]:
+    """Request human approval for critical operations.
+    
+    This node pauses execution and asks for human approval before
+    executing write operations on the document.
+    
+    Args:
+        state (State): The current state of the conversation.
+        
+    Returns:
+        dict: Updated state with approved operation or rejection message.
+    """
+    last_message = state.messages[-1]
+    
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return {}
+    
+    # Check if any tool calls require approval
+    tool_calls_needing_approval = [
+        tc for tc in last_message.tool_calls 
+        if requires_approval(tc["name"])
+    ]
+    
+    if not tool_calls_needing_approval:
+        # No approval needed, proceed to tools
+        return {}
+    
+    # For now, handle the first tool call that needs approval
+    tool_call = tool_calls_needing_approval[0]
+    tool_name = tool_call["name"]
+    tool_args = tool_call["args"]
+    
+    # Create a human-readable description of the operation
+    if tool_name == "apply_edit":
+        anchor = tool_args.get("anchor", [])
+        new_text = tool_args.get("new_text", "")
+        description = (
+            f"**Edit Operation**\n"
+            f"- Location: {anchor}\n"
+            f"- New text: {new_text[:100]}{'...' if len(new_text) > 100 else ''}\n\n"
+            f"Do you approve this change? (yes/no)"
+        )
+    else:
+        description = f"Approve {tool_name} with args: {tool_args}? (yes/no)"
+    
+    # Interrupt and wait for human approval
+    approval = interrupt(
+        {
+            "type": "approval_request",
+            "tool_name": tool_name,
+            "tool_call_id": tool_call["id"],
+            "args": tool_args,
+            "description": description
+        }
+    )
+    
+    # Process approval response
+    if isinstance(approval, str):
+        approval = approval.lower().strip()
+    
+    if approval in ["yes", "y", "approve", "approved", "true"]:
+        # Approval granted - proceed with the operation
+        return {"pending_operation": None}
+    else:
+        # Approval denied - create tool messages for all tool calls
+        # We need to respond to ALL tool calls, not just the rejected one
+        tool_messages = []
+        
+        for tc in last_message.tool_calls:
+            if tc["id"] == tool_call["id"]:
+                # This is the rejected tool
+                tool_messages.append(ToolMessage(
+                    content=f"Operation cancelled by user. The {tc['name']} operation was not executed.",
+                    tool_call_id=tc["id"],
+                    name=tc["name"]
+                ))
+            else:
+                # Other tool calls should also get rejection messages
+                tool_messages.append(ToolMessage(
+                    content=f"Skipped due to user rejection of {tool_name}.",
+                    tool_call_id=tc["id"],
+                    name=tc["name"]
+                ))
+        
+        return {
+            "messages": tool_messages,
+            "pending_operation": None
+        }
+
+
+def route_model_output(state: State) -> Literal["__end__", "tools", "approval_node"]:
     """Determine the next node based on the model's output.
 
-    This function checks if the model's last message contains tool calls.
+    This function checks if the model's last message contains tool calls
+    and routes to approval if needed.
 
     Args:
         state (State): The current state of the conversation.
 
     Returns:
-        str: The name of the next node to call ("__end__" or "tools").
+        str: The name of the next node to call.
     """
     last_message = state.messages[-1]
     
@@ -109,9 +204,51 @@ def route_model_output(state: State) -> Literal["__end__", "tools"]:
     # If there is no tool call, then we finish
     if not last_message.tool_calls:
         return "__end__"
-    # Otherwise we execute the requested actions
+    
+    # Check if any tool calls require approval
+    needs_approval = any(
+        requires_approval(tc["name"]) for tc in last_message.tool_calls
+    )
+    
+    if needs_approval:
+        return "approval_node"
+    
+    # No approval needed, execute tools directly
     return "tools"
 
+
+def route_approval(state: State) -> Literal["tools", "call_model"]:
+    """Route after approval node.
+    
+    If approval was granted, go to tools. If rejected, go back to call_model.
+    
+    Args:
+        state (State): The current state.
+        
+    Returns:
+        str: Next node to call.
+    """
+    # Check if the last message is a rejection (ToolMessage added by approval_node)
+    if state.messages and isinstance(state.messages[-1], ToolMessage):
+        # Rejection message was added, go back to model
+        return "call_model"
+    
+    # Approval granted, proceed to execute tools
+    return "tools"
+
+
+# Define and build the graph
+
+builder = StateGraph(State, input_schema=InputState, context_schema=Context)
+
+# Define the nodes
+builder.add_node(call_model)
+builder.add_node("approval_node", approval_node)
+builder.add_node("tools", ToolNode(TOOLS))
+
+# Set the entrypoint as `call_model`
+# This means that this node is the first one called
+builder.add_edge("__start__", "call_model")
 
 # Add a conditional edge to determine the next step after `call_model`
 builder.add_conditional_edges(
@@ -119,6 +256,12 @@ builder.add_conditional_edges(
     # After call_model finishes running, the next node(s) are scheduled
     # based on the output from route_model_output
     route_model_output,
+)
+
+# Add conditional edge from approval_node
+builder.add_conditional_edges(
+    "approval_node",
+    route_approval,
 )
 
 # Add a normal edge from `tools` to `call_model`
