@@ -81,24 +81,17 @@ class AgentRunner:
         self, 
         session_id: str,
         thread_id: str,
-        message: str
+        message: str,
+        document_context: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         Process a user message through the agent
-        
-        Args:
-            session_id: Session identifier
-            thread_id: LangGraph thread ID for conversation continuity
-            message: User's message
-            
-        Returns:
-            Dict containing response and approval status
         """
         try:
             if self._use_remote:
-                return await self._process_remote(thread_id, message)
+                return await self._process_remote(thread_id, message, document_context)
             else:
-                return await self._process_local(thread_id, message)
+                return await self._process_local(thread_id, message, document_context)
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             return {
@@ -107,8 +100,21 @@ class AgentRunner:
                 "error": str(e)
             }
     
-    async def _process_remote(self, thread_id: str, message: str) -> Dict[str, Any]:
+    async def _process_remote(self, thread_id: str, message: str, document_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Process message using remote LangGraph server"""
+        
+        input_data = {
+            "messages": [{"role": "user", "content": message}]
+        }
+        
+        # Add document context if available
+        if document_context and document_context.get("loaded"):
+            input_data.update({
+                "document_loaded": True,
+                "document_path": document_context["document_path"],
+                "document_name": document_context["document_name"]
+            })
+    
         # Run the agent
         result = await self._client.runs.wait(
             thread_id,
@@ -145,7 +151,7 @@ class AgentRunner:
             "requires_approval": False
         }
     
-    async def _process_local(self, thread_id: str, message: str) -> Dict[str, Any]:
+    async def _process_local(self, thread_id: str, message: str, document_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Process message using local graph"""
         from langchain_core.messages import HumanMessage, AIMessage
         
@@ -156,10 +162,18 @@ class AgentRunner:
             }
         }
         
-        # Prepare input
+        # Prepare input with document context if available
         input_data = {
             "messages": [HumanMessage(content=message)]
         }
+        
+        # Add document context to the state if available
+        if document_context and document_context.get("loaded"):
+            input_data.update({
+                "document_loaded": True,
+                "document_path": document_context["document_path"],
+                "document_name": document_context["document_name"]
+            })
         
         # Run the graph
         try:
@@ -167,7 +181,7 @@ class AgentRunner:
             result = await self._graph.ainvoke(
                 input_data,
                 config=config,
-                context=self._default_context
+                context=self._default_context  # Add context here
             )
             
             # Check if execution was interrupted (approval needed)
@@ -176,7 +190,6 @@ class AgentRunner:
             # Check if there are pending tasks (interrupts)
             if state.next:  # next contains the nodes that are pending
                 # There's an interrupt - check for approval data
-                # The interrupt data is stored in state.tasks
                 if state.tasks:
                     for task in state.tasks:
                         if task.interrupts:
@@ -209,7 +222,8 @@ class AgentRunner:
         except Exception as e:
             logger.error(f"Error in local graph execution: {e}", exc_info=True)
             raise
-    
+        
+        
     async def resume_with_approval(
         self,
         session_id: str,

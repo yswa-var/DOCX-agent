@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, fields
 from typing import Annotated
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from . import prompts
 
@@ -36,4 +39,12 @@ class Context:
                 continue
 
             if getattr(self, f.name) == f.default:
-                setattr(self, f.name, os.environ.get(f.name.upper(), f.default))
+                # For model, check MODEL env var and format it properly
+                if f.name == "model":
+                    env_model = os.environ.get("MODEL", f.default)
+                    # If env model doesn't have provider prefix, add it
+                    if "/" not in env_model:
+                        env_model = f"openai/{env_model}"
+                    setattr(self, f.name, env_model)
+                else:
+                    setattr(self, f.name, os.environ.get(f.name.upper(), f.default))

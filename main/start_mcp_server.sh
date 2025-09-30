@@ -1,56 +1,35 @@
 #!/bin/bash
 
-# Start MCP Server for LangGraph DOCX Agent
-# This script starts the LangGraph server with MCP support
+# Minimal LangGraph MCP Server startup script
 
 set -e
 
 echo "🚀 Starting LangGraph MCP Server..."
-echo ""
 
-# Check if .env file exists
+# Check for .env and langgraph.json
 if [ ! -f .env ]; then
-    echo "⚠️  Warning: .env file not found"
-    echo "Creating .env from .env.example if available..."
-    if [ -f .env.example ]; then
-        cp .env.example .env
-        echo "✅ Created .env file. Please update it with your API keys."
-    else
-        echo "❌ No .env.example found. Please create a .env file with your API keys."
-        exit 1
-    fi
+    echo "❌ .env file not found! Please create it with your OpenAI API key."
+    exit 1
 fi
 
-# Check if dependencies are installed
-echo "📦 Checking dependencies..."
-if ! python -c "import langgraph" 2>/dev/null; then
-    echo "Installing dependencies..."
-    pip install -e .
+if [ ! -f langgraph.json ]; then
+    echo "❌ langgraph.json not found! Please create it or copy from your repo."
+    exit 1
 fi
 
-# Set default values
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8123}"
+# Load environment variables from .env
+echo "📋 Loading environment variables..."
+set -a
+source .env
+set +a
 
-echo ""
-echo "📋 Configuration:"
-echo "   Host: $HOST"
-echo "   Port: $PORT"
-echo "   MCP Endpoint: http://$HOST:$PORT/mcp"
-echo ""
-echo "🔧 Available Tools:"
-echo "   - index_docx: Index/re-index DOCX documents"
-echo "   - apply_edit: Apply edits to paragraphs (requires approval)"
-echo "   - update_toc: Generate table of contents"
-echo "   - get_paragraph: Get specific paragraph by anchor"
-echo "   - search_document: Search for text in document"
-echo "   - get_document_outline: Get document heading structure"
-echo ""
-echo "📖 For setup instructions, see MCP_SETUP.md"
-echo ""
-echo "Starting server..."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
+# Verify API key is set
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "❌ OPENAI_API_KEY not found in .env file!"
+    exit 1
+fi
 
-# Start the LangGraph server
-langgraph dev --host "$HOST" --port "$PORT"
+echo "✅ Environment loaded successfully"
+
+# Start LangGraph dev server (matching your manual run)
+exec langgraph dev --config langgraph.json --host 127.0.0.1 --port 2024
