@@ -1,0 +1,5 @@
+docx2python>=3.5.0
+python-docx>=1.2.0
+lxml>=6.0.0
+langgraph-api>=0.2.3
+langgraph-sdk>=0.1.61
