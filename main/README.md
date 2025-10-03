@@ -99,7 +99,7 @@ pip install -e .
 ./start_mcp_server.sh
 ```
 
-The server will start at `http://localhost:8123` with the MCP endpoint at `/mcp`.
+The server will start at `http://localhost:2024` with the MCP endpoint at `/mcp`.
 
 ### Detailed Setup
 

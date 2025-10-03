@@ -107,6 +107,31 @@ Open http://localhost:8000 in your browser.
 "Where is the pricing section?"
 ```
 
+## ⚙️ Demo Backend Setup
+
+For the lightweight demo flow you can run just the FastAPI backend and the optional Microsoft Teams adapter.
+
+1. **Configure environment**
+   ```bash
+   cd /Users/yash/Documents/rfp/DOCX-agent
+   cp .env.example .env  # update values if needed
+   ```
+2. **Start the backend API**
+   ```bash
+   uvicorn backend.app:app --reload --port 8080
+   ```
+   - Uses in-memory LangGraph execution
+   - Persists session metadata to `backend/sessions.csv`
+   - Reads demo DOCX files from the directories listed in `DOCUMENT_SEARCH_DIRS`
+3. **(Optional) Run the Teams bridge**
+   ```bash
+   cd teams
+   python app.py
+   ```
+   Set `BACKEND_API_URL` in your environment if the backend is not on `http://localhost:8080`.
+4. **Load a document in chat**
+   Send `/load master.docx` (or another filename) from the web/Teams client to attach the sample document.
+
 ## 📚 How It Works
 
 ### 1. Document Indexing (docx2python)

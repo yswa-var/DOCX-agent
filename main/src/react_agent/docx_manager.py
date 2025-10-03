@@ -144,7 +144,7 @@ def get_docx_manager(docx_path: Optional[str] = None) -> DocxManager:
     if _docx_manager is None:
         if docx_path is None:
             # Default path - you can make this configurable
-            docx_path = "/home/aditya/work/temp/DOCX-agent/backend/master.docx"
+            docx_path = "/Users/yash/Documents/rfp/DOCX-agent/response/master.docx"
         _docx_manager = DocxManager(docx_path)
     
     return _docx_manager

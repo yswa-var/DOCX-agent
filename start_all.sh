@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # DOCX Agent - Start All Services
-# This script starts all services in the correct order in separate terminals
+# This script starts all services in the correct order in the background
 
 set -e
 
@@ -71,43 +71,48 @@ port_in_use() {
     fi
 }
 
-# Function to start service in new terminal
+# Function to start service in background (simplified)
 start_service() {
     local service_name=$1
     local working_dir=$2
     local command=$3
     local port=$4
     local wait_time=$5
-    
+
     echo ""
     echo "🔄 Starting $service_name..."
     echo "📂 Directory: $working_dir"
     echo "🏃 Command: $command"
+
+    start_service_background "$service_name" "$working_dir" "$command" "$port" "$wait_time"
+}
+
+# Function to start service in background
+start_service_background() {
+    local service_name=$1
+    local working_dir=$2
+    local command=$3
+    local port=$4
+    local wait_time=$5
     
-    # Different terminal commands based on what's available
-    if command -v kitty >/dev/null 2>&1; then
-        kitty --detach --directory="$working_dir" --title="DOCX Agent - $service_name" bash -c "$command; read -p 'Press Enter to close...'" &
-    elif command -v gnome-terminal >/dev/null 2>&1; then
-        gnome-terminal --working-directory="$working_dir" --title="DOCX Agent - $service_name" -- bash -c "$command; read -p 'Press Enter to close...'" &
-    elif command -v xterm >/dev/null 2>&1; then
-        xterm -T "DOCX Agent - $service_name" -e "cd '$working_dir' && $command; read -p 'Press Enter to close...'" &
-    elif command -v konsole >/dev/null 2>&1; then
-        konsole --workdir "$working_dir" --title "DOCX Agent - $service_name" -e bash -c "$command; read -p 'Press Enter to close...'" &
-    elif command -v terminator >/dev/null 2>&1; then
-        terminator --working-directory="$working_dir" --title="DOCX Agent - $service_name" -e "bash -c '$command; read -p \"Press Enter to close...\"'" &
-    elif command -v tilix >/dev/null 2>&1; then
-        tilix --working-directory="$working_dir" --title="DOCX Agent - $service_name" -e "bash -c '$command; read -p \"Press Enter to close...\"'" &
-    else
-        echo "❌ No supported terminal emulator found!"
-        echo "   Please install one of: kitty, gnome-terminal, xterm, konsole, terminator, or tilix"
-        echo "   Or run services manually:"
-        echo "   cd $working_dir && $command"
-        exit 1
-    fi
+    # Create log file for this service
+    local log_file="$PROJECT_ROOT/logs/${service_name// /_}.log"
+    mkdir -p "$PROJECT_ROOT/logs"
+    
+    echo "📝 Logging $service_name output to: $log_file"
+    
+    # Start service in background with logging
+    (
+        cd "$working_dir"
+        nohup bash -c "$command" > "$log_file" 2>&1 &
+        local pid=$!
+        echo $pid > "$PROJECT_ROOT/logs/${service_name// /_}.pid"
+        echo "🆔 $service_name PID: $pid"
+    )
     
     # Wait for service to start if port is specified
     if [ ! -z "$port" ] && [ ! -z "$wait_time" ]; then
-        sleep 3  # Give terminal time to start
+        sleep 2  # Give service time to start
         check_port "$port" "$service_name" "$wait_time"
     fi
 }
@@ -116,8 +121,25 @@ start_service() {
 cleanup_services() {
     echo "🧹 Cleaning up existing services..."
     
+    # Kill processes from PID files first
+    if [ -d "$PROJECT_ROOT/logs" ]; then
+        for pid_file in "$PROJECT_ROOT/logs"/*.pid; do
+            if [ -f "$pid_file" ]; then
+                local pid=$(cat "$pid_file")
+                local service_name=$(basename "$pid_file" .pid)
+                if kill -0 "$pid" 2>/dev/null; then
+                    echo "   Killing $service_name (PID: $pid)..."
+                    kill "$pid" 2>/dev/null || true
+                    sleep 1
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+                rm -f "$pid_file"
+            fi
+        done
+    fi
+    
     # Kill processes on known ports
-    for port in 8123 8000 3978; do
+    for port in 2024 8080 3978; do
         if port_in_use "$port"; then
             echo "   Killing service on port $port..."
             # Try different methods to kill
@@ -223,7 +245,7 @@ start_service \
     "Backend API" \
     "$PROJECT_ROOT/backend" \
     "./start.sh" \
-    "8000" \
+    "8080" \
     "15"
 
 # 3. Start Teams Bot
@@ -256,25 +278,53 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🎉 All services started successfully!"
 echo ""
 echo "📊 Service Status:"
-echo "   🌐 LangGraph Server:     http://localhost:8123"
-echo "   🔧 Backend API:          http://localhost:8000"
+echo "   🌐 LangGraph Server:     http://localhost:2024"
+echo "   🔧 Backend API:          http://localhost:8080"
 echo "   🤖 Teams Bot:            http://localhost:3978"
 echo "   🧪 Teams Test Tool:      http://localhost:3978 (if installed)"
-echo "   📖 API Docs:             http://localhost:8000/docs"
+echo "   📖 API Docs:             http://localhost:8080/docs"
 echo ""
 echo "🔍 To monitor services:"
-echo "   curl http://localhost:8123/health    # LangGraph"
-echo "   curl http://localhost:8000/health    # Backend"
+echo "   curl http://localhost:2024/health    # LangGraph"
+echo "   curl http://localhost:8080/health    # Backend"
 echo ""
+
+# Check if services are running in background
+if [ -d "$PROJECT_ROOT/logs" ] && [ "$(ls -A "$PROJECT_ROOT/logs"/*.log 2>/dev/null)" ]; then
+    echo "📝 Background Service Logs:"
+    for log_file in "$PROJECT_ROOT/logs"/*.log; do
+        if [ -f "$log_file" ]; then
+            local service_name=$(basename "$log_file" .log)
+            echo "   📄 $service_name: $log_file"
+        fi
+    done
+    echo ""
+    echo "🔍 To view logs in real-time:"
+    echo "   tail -f $PROJECT_ROOT/logs/[service_name].log"
+    echo ""
+    echo "🆔 To check service PIDs:"
+    echo "   cat $PROJECT_ROOT/logs/[service_name].pid"
+    echo ""
+fi
+
 echo "💡 Teams Test Tool Usage:"
 echo "   - The test tool provides a local Teams-like interface"
 echo "   - Test your bot without needing actual Teams"
 echo "   - Access via web browser on the port shown"
 echo ""
-echo "⚠️  Note: Each service is running in its own terminal window."
-echo "   Close terminal windows to stop individual services."
+
+echo "⚠️  Note: Services are running in the background."
+echo "   Check logs directory for service output and PIDs."
+
 echo ""
 echo "🛑 To stop all services:"
-echo "   ./stop_all.sh (if available) or close all terminal windows"
+if [ -f "$PROJECT_ROOT/stop_all.sh" ]; then
+    echo "   ./stop_all.sh"
+else
+    echo "   Run this script again with cleanup option (y) to stop all services"
+fi
+if [ -d "$PROJECT_ROOT/logs" ] && [ "$(ls -A "$PROJECT_ROOT/logs"/*.pid 2>/dev/null)" ]; then
+    echo "   Or manually kill PIDs from: $PROJECT_ROOT/logs/*.pid"
+fi
 echo ""
 echo "✅ Setup complete! Your DOCX Agent is ready for use."

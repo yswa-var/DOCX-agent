@@ -245,6 +245,25 @@ class SessionManager:
             self._save_sessions()  # Save to CSV
             return True
     
+    def update_session_metadata(
+        self,
+        session_id: str,
+        metadata_updates: Dict[str, Any]
+    ) -> bool:
+        """Merge metadata updates into the session and persist to CSV"""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session:
+                return False
+
+            session.metadata = {
+                **(session.metadata or {}),
+                **metadata_updates,
+            }
+            session.last_activity = datetime.utcnow()
+            self._save_sessions()
+            return True
+
     def clear_pending_approval(self, session_id: str) -> bool:
         """Clear pending approval from a session"""
         with self._lock:

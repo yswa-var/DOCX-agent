@@ -10,7 +10,7 @@ class DefaultConfig:
     APP_TENANTID = os.environ.get("MicrosoftAppTenantId", "")
     
     # Backend API settings
-    BACKEND_API_URL = os.environ.get("BACKEND_API_URL", "http://localhost:8000")
+    BACKEND_API_URL = os.environ.get("BACKEND_API_URL", "http://localhost:8080")
     
     # Teams specific settings
     TEAMS_ENABLED = True

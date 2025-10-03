@@ -11,7 +11,7 @@ from typing import Any, Dict
 import httpx
 
 
-SERVER_URL = "http://localhost:8123"
+SERVER_URL = "http://localhost:2024"
 MCP_ENDPOINT = f"{SERVER_URL}/mcp"
 
 

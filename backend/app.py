@@ -3,7 +3,7 @@ FastAPI Backend for LangGraph DOCX Agent Bot
 Enables the agent to be used across multiple chat platforms
 """
 
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -13,10 +13,10 @@ import logging
 from datetime import datetime
 import uuid
 import os
-
-from session_manager import SessionManager
-from agent_runner import AgentRunner
 from pathlib import Path
+
+from session_manager import SessionManager, Session
+from agent_runner import AgentRunner
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +48,37 @@ session_manager = SessionManager(csv_file=csv_path)
 agent_runner = AgentRunner()
 
 
+# Common constants/helpers
+BASE_DIR = Path(__file__).resolve().parent
+EXTRA_DOC_DIRS = tuple(
+    Path(p).expanduser()
+    for p in os.getenv("DOC_AGENT_DOCUMENT_DIRS", "").split(os.pathsep)
+    if p.strip()
+)
+DOCUMENT_SEARCH_DIRS = tuple(
+    path
+    for path in (
+        BASE_DIR,
+        BASE_DIR.parent,
+        BASE_DIR.parent / "main",
+        BASE_DIR.parent / "documents",
+        *EXTRA_DOC_DIRS,
+    )
+    if path.exists()
+)
+DEFAULT_DOC_CANDIDATES = tuple(
+    name
+    for name in (
+        os.getenv("DEFAULT_DOCX_NAME"),
+        "master.docx",
+        "Master.docx",
+    )
+    if name
+)
+APPROVE_KEYWORDS = frozenset({"yes", "approve", "/approve"})
+REJECT_KEYWORDS = frozenset({"no", "reject", "/reject"})
+
+
 # ============================================================================
 # Request/Response Models
 # ============================================================================
@@ -58,6 +89,12 @@ class ChatMessage(BaseModel):
     message: str
     platform: str = "api"  # api, telegram, discord, slack, whatsapp,teams
     metadata: Optional[Dict[str, Any]] = None
+
+    def normalized_user_id(self) -> str:
+        return f"{self.platform}_{self.user_id}" if not self.user_id.startswith(f"{self.platform}_") else self.user_id
+
+    def user_profile(self) -> Dict[str, Any]:
+        return (self.metadata or {}).get("user_profile", {})
 
 
 class ChatResponse(BaseModel):
@@ -131,75 +168,42 @@ async def chat(message: ChatMessage):
     try:
         logger.info(f"Received message from {message.user_id} on {message.platform}")
         
-        # Get or create session
+        # Normalize user id and get session
+        normalized_user_id = message.normalized_user_id()
         session = session_manager.get_or_create_session(
-            user_id=message.user_id,
-            platform=message.platform
+            user_id=normalized_user_id,
+            platform=message.platform,
         )
         
-        user_profile = {}
+        user_profile = message.user_profile()
         enhanced_message = message.message
         
-        if message.metadata:
-            user_profile = message.metadata.get("user_profile", {})
-            
-            if user_profile.get("name"): 
-                enhanced_message = f"[User: {user_profile['name']}] {message.message}"
-                logger.info(f"Processing message for user: {user_profile['name']}")
+        if user_profile.get("name"):
+            enhanced_message = f"[User: {user_profile['name']}] {message.message}"
+            logger.info("Processing message for user: %s", user_profile['name'])
         
-        if user_profile: 
-            session.metadata = session.metadata or {}
-            session.metadata["user_profile"] = user_profile
+        if user_profile:
+            session_manager.update_session_metadata(
+                session.session_id,
+                {"user_profile": user_profile},
+            )
         
         if message.message.startswith("/load "):
             filename = message.message.replace("/load ", "").strip()
-            file_path = load_test_document(filename)
-            
-            response_metadata = {}
-            if user_profile:
-                response_metadata["user_profile"] = user_profile
-            
-            if file_path:
-                # Store the document path in session metadata
-                session.metadata = session.metadata or {}
-                session.metadata["document_path"] = file_path
-                session.metadata["document_name"] = filename
-                
-                return ChatResponse(
-                    user_id=message.user_id,
-                    message=f"✅ Document '{filename}' loaded successfully!\n\n"
-                            f"📍 Location: {file_path}\n\n"
-                            f"You can now:\n"
-                            f"• Ask me to summarize the document\n"
-                            f"• Search for content\n"
-                            f"• Request document structure\n"
-                            f"• Edit content (with approval)",
-                    platform=message.platform,
-                    requires_approval=False,
-                    session_id=session.session_id,
-                    metadata=response_metadata,
-                    status="completed"
-                )
-            else:
-                return ChatResponse(
-                    user_id=message.user_id,
-                    message=f"❌ Document '{filename}' not found.\n\n"
-                            f"Please make sure the file exists in one of these locations:\n"
-                            f"• /home/aditya/work/temp/DOCX-agent/backend/\n"
-                            f"• /home/aditya/work/temp/DOCX-agent/\n"
-                            f"• /home/aditya/work/temp/DOCX-agent/main/",
-                    platform=message.platform,
-                    requires_approval=False,
-                    session_id=session.session_id,
-                    metadata=response_metadata,
-                    status="error"
-                )
+            document_result = _attempt_load_document(filename, user_profile, session)
+            return ChatResponse(
+                user_id=message.user_id,
+                platform=message.platform,
+                session_id=session.session_id,
+                **document_result,
+            )
         
-        if session.pending_approval and message.message.lower() in ['yes', 'no', '/approve', '/reject']:
+        normalized_text = message.message.strip().lower()
+        if session.pending_approval and _is_decision_command(normalized_text):
             approval_response = ApprovalRequest(
                 user_id=message.user_id,
                 session_id=session.session_id,
-                approved=message.message.lower() in ['yes', '/approve'],
+                approved=_is_approval(normalized_text),
                 platform=message.platform,
                 user_profile=user_profile
             )
@@ -212,7 +216,7 @@ async def chat(message: ChatMessage):
                 
                 if not session.pending_approval:
                     return ChatResponse(
-                        user_id=message.user_id,
+                        user_id=normalized_user_id,
                         message="No pending approval found.",
                         platform=message.platform,
                         requires_approval=False,
@@ -235,7 +239,7 @@ async def chat(message: ChatMessage):
                     response_metadata["user_profile"] = user_profile
                 
                 return ChatResponse(
-                    user_id=message.user_id,
+                    user_id=normalized_user_id,
                     message=result["message"],
                     platform=message.platform,
                     requires_approval=False,
@@ -247,7 +251,7 @@ async def chat(message: ChatMessage):
             except Exception as e:
                 logger.error(f"Error processing approval: {str(e)}", exc_info=True)
                 return ChatResponse(
-                    user_id=message.user_id,
+                    user_id=normalized_user_id,
                     message="Sorry, there was an error processing your approval. Please try again.",
                     platform=message.platform,
                     requires_approval=False,
@@ -258,7 +262,7 @@ async def chat(message: ChatMessage):
         # Check if user has a pending approval
         if session.pending_approval:
             return ChatResponse(
-                user_id=message.user_id,
+                user_id=normalized_user_id,
                 message="You have a pending approval request. Please respond with /approve or /reject first.",
                 platform=message.platform,
                 requires_approval=False,
@@ -297,21 +301,26 @@ async def chat(message: ChatMessage):
         
         # Check if approval is required
         if result.get("requires_approval"):
-            # Store approval data in session
+            approval_data = result.get("approval_data", {})
             session_manager.set_pending_approval(
                 session_id=session.session_id,
-                approval_data=result["approval_data"]
+                approval_data=approval_data
             )
+            if user_profile:
+                session_manager.update_session_metadata(
+                    session.session_id,
+                    {"user_profile": user_profile},
+                )
             
             # Format approval message for user
-            approval_msg = format_approval_message(result["approval_data"])
+            approval_msg = format_approval_message(approval_data)
             
             response_metadata = {}
             if user_profile:
                 response_metadata["user_profile"] = user_profile
             
             return ChatResponse(
-                user_id=message.user_id,
+                user_id=normalized_user_id,
                 message=approval_msg,
                 platform=message.platform,
                 requires_approval=True,
@@ -327,7 +336,7 @@ async def chat(message: ChatMessage):
         
         # Normal response
         return ChatResponse(
-            user_id=message.user_id,
+            user_id=normalized_user_id,
             message=result["message"],
             platform=message.platform,
             requires_approval=False,
@@ -339,7 +348,7 @@ async def chat(message: ChatMessage):
     except Exception as e:
         logger.error(f"Error processing chat message: {str(e)}", exc_info=True)
         return ChatResponse(
-            user_id=message.user_id,
+            user_id=normalized_user_id,
             message="Sorry, I encountered an error processing your request. Please try again.",
             platform=message.platform,
             requires_approval=False,
@@ -460,51 +469,12 @@ async def clear_session(user_id: str):
     return {"message": f"Cleared session state for {user_id}"}
 
 # Add this endpoint after the debug endpoints:
-@app.post("/api/test-document")
-async def test_document_processing():
-    """Test document processing directly"""
-    try:
-        # Find a test document
-        doc_path = load_test_document("master.docx")
-        if not doc_path:
-            return {"error": "No test document found"}
-        
-        # Try to process it directly
-        try:
-            import docx2python
-            doc = docx2python.docx2python(doc_path)
-            text_content = doc.text
-            
-            return {
-                "document_path": doc_path,
-                "content_length": len(text_content),
-                "first_100_chars": text_content[:100],
-                "status": "success",
-                "file_exists": True
-            }
-        except ImportError:
-            # Try with python-docx
-            from docx import Document
-            doc = Document(doc_path)
-            text_content = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-            
-            return {
-                "document_path": doc_path,
-                "content_length": len(text_content),
-                "first_100_chars": text_content[:100],
-                "status": "success (python-docx)",
-                "file_exists": True
-            }
-            
-    except Exception as e:
-        return {"error": str(e), "status": "failed"}
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
 def format_approval_message(approval_data: Dict[str, Any]) -> str:
     """Format approval request for user-friendly display"""
-    tool_name = approval_data.get("tool_name", "unknown")
     description = approval_data.get("description", "")
     
     message = f"""
@@ -519,30 +489,108 @@ Reply with:
     return message.strip()
 
 
+def _attempt_load_document(filename: str, user_profile: Dict[str, Any], session: Session) -> Dict[str, Any]:
+    """Try to resolve and persist document metadata while preparing response payload."""
+    filename = (filename or "").strip()
+    response_metadata: Dict[str, Any] = {}
+
+    if user_profile:
+        response_metadata["user_profile"] = user_profile
+
+    if not filename:
+        return {
+            "message": "❌ Please provide a document name. Example: /load master.docx",
+            "requires_approval": False,
+            "metadata": response_metadata,
+            "status": "error",
+        }
+
+    resolved_path = resolve_document_path(filename)
+
+    if not resolved_path:
+        search_dirs = "\n".join(f"• {path}" for path in DOCUMENT_SEARCH_DIRS)
+        return {
+            "message": (
+                f"❌ Document '{filename}' not found.\n\n"
+                f"Searched in:\n{search_dirs}\n\n"
+                f"Upload the file or update DOC_AGENT_DOCUMENT_DIRS."
+            ),
+            "requires_approval": False,
+            "metadata": response_metadata,
+            "status": "error",
+        }
+
+    session_manager.update_session_metadata(
+        session.session_id,
+        {
+            "document_path": str(resolved_path),
+            "document_name": resolved_path.name,
+            "document_loaded_at": datetime.utcnow().isoformat(),
+        },
+    )
+
+    return {
+        "message": (
+            f"✅ Document '{resolved_path.name}' loaded successfully!\n\n"
+            f"📍 Location: {resolved_path}\n\n"
+            "You can now:\n"
+            "• Summarize the document\n"
+            "• Search for specific content\n"
+            "• Request the structure\n"
+            "• Draft edits (approval required)"
+        ),
+        "requires_approval": False,
+        "metadata": response_metadata,
+        "status": "completed",
+    }
+
+
+def _is_decision_command(message: str) -> bool:
+    """Check if the incoming message is an approval decision."""
+    if not message:
+        return False
+    first_token = message.split()[0]
+    return first_token in APPROVE_KEYWORDS or first_token in REJECT_KEYWORDS
+
+
+def _is_approval(message: str) -> bool:
+    """Return True when the message indicates approval."""
+    if not message:
+        return False
+    first_token = message.split()[0]
+    return first_token in APPROVE_KEYWORDS
+
+
 def load_test_document(filename: str = None):
     """Load a test document for development"""
-    if filename:
-        # Look for the specific file in common locations
-        possible_paths = [
-            os.path.join(os.path.dirname(__file__), filename),
-            os.path.join(os.path.dirname(__file__), "..", filename),
-            os.path.join(os.path.dirname(__file__), "..", "main", filename),
-            os.path.join(os.path.dirname(__file__), "..", "documents", filename),
-            f"/home/aditya/work/temp/DOCX-agent/{filename}",
-            f"/home/aditya/work/temp/DOCX-agent/backend/{filename}",
-            f"/home/aditya/work/temp/DOCX-agent/main/{filename}",
-        ]
-    else:
-        # Look for any DOCX file
-        possible_paths = [
-            "/home/aditya/work/temp/DOCX-agent/backend/master.docx",
-            "/home/aditya/work/temp/DOCX-agent/master.docx",
-            "/home/aditya/work/temp/DOCX-agent/main/master.docx",
-        ]
-    
-    for path in possible_paths:
-        if os.path.exists(path):
-            return path
+    target = filename or next(iter(DEFAULT_DOC_CANDIDATES), None)
+    resolved = resolve_document_path(target) if target else None
+    return str(resolved) if resolved else None
+
+
+def resolve_document_path(filename: str) -> Optional[Path]:
+    """Resolve a filename against known directories and return the first match."""
+    if not filename:
+        return None
+
+    candidate_path = Path(filename).expanduser()
+    if candidate_path.is_absolute() and candidate_path.exists():
+        return candidate_path
+
+    # when only name provided search directories
+    for directory in DOCUMENT_SEARCH_DIRS:
+        candidate = directory / candidate_path
+        if candidate.exists():
+            return candidate
+
+    # When no extension, try .docx
+    if candidate_path.suffix == "":
+        for directory in DOCUMENT_SEARCH_DIRS:
+            candidate = directory / f"{candidate_path}.docx"
+            candidate = Path(candidate)
+            if candidate.exists():
+                return candidate
+
     return None
 
 # ============================================================================

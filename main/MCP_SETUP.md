@@ -207,7 +207,7 @@ OPENAI_API_KEY=your-openai-key
 ANTHROPIC_API_KEY=your-anthropic-key
 
 # Optional: Document path (defaults to response/master.docx)
-DOCX_PATH=/path/to/your/document.docx
+DOCX_PATH=/Users/yash/Documents/rfp/DOCX-agent/response/master.docx
 
 # Optional: Server configuration
 HOST=0.0.0.0

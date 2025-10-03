@@ -77,46 +77,45 @@ class DocxIndexer:
             self.docx_obj = docx
             pars = docx.body
             
-            # Iterate through depth-4: [table][row][column][paragraph]
-            for table_idx, table in enumerate(pars):
-                for row_idx, row in enumerate(table):
-                    for col_idx, col in enumerate(row):
-                        for par_idx, par in enumerate(col):
-                            text = par.strip() if isinstance(par, str) else str(par).strip()
-                            
-                            if not text or text == '\n':
-                                continue
-                            
-                            # Create anchor
-                            anchor = ["body", table_idx, row_idx, col_idx, par_idx]
-                            
-                            # Detect heading level
-                            level = self._detect_heading_level(text) or 0
-                            
-                            # Determine style
-                            if level == 1:
-                                style = "Heading 1"
-                            elif level == 2:
-                                style = "Heading 2"
-                            elif level > 2:
-                                style = f"Heading {level}"
-                            else:
-                                style = "Normal"
-                            
-                            # Build breadcrumb
-                            breadcrumb = self._build_breadcrumb(text, level)
-                            
-                            # Create paragraph object
-                            paragraph = Paragraph(
-                                anchor=anchor,
-                                breadcrumb=breadcrumb,
-                                style=style,
-                                text=text,
-                                level=level
-                            )
-                            
-                            self.paragraphs.append(paragraph)
-        
+            # Recursively iterate through arbitrary depth (up to max_depth=20) for low-level access
+
+            def _traverse(node, anchor_prefix, depth):
+                if depth > 20:
+                    return
+                if isinstance(node, list):
+                    for idx, child in enumerate(node):
+                        _traverse(child, anchor_prefix + [idx], depth + 1)
+                else:
+                    # At the leaf node (paragraph or text)
+                    text = node.strip() if isinstance(node, str) else str(node).strip()
+                    if not text or text == '\n':
+                        return
+                    # Anchor: always starts with "body", then the full path
+                    anchor = ["body"] + anchor_prefix
+                    # Detect heading level
+                    level = self._detect_heading_level(text) or 0
+                    # Determine style
+                    if level == 1:
+                        style = "Heading 1"
+                    elif level == 2:
+                        style = "Heading 2"
+                    elif level > 2:
+                        style = f"Heading {level}"
+                    else:
+                        style = "Normal"
+                    # Build breadcrumb
+                    breadcrumb = self._build_breadcrumb(text, level)
+                    # Create paragraph object
+                    paragraph = Paragraph(
+                        anchor=anchor,
+                        breadcrumb=breadcrumb,
+                        style=style,
+                        text=text,
+                        level=level
+                    )
+                    self.paragraphs.append(paragraph)
+
+            _traverse(pars, [], 0)
         return [asdict(p) for p in self.paragraphs]
     
     def get_outline(self) -> List[Dict[str, Any]]:

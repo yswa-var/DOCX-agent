@@ -29,7 +29,7 @@ class AgentRunner:
         """
         self.langgraph_url = langgraph_url or os.getenv(
             "LANGGRAPH_URL", 
-            "http://localhost:8123"
+            "http://localhost:2024"
         )
         self.assistant_id = "docx_agent"
         self._client = None
